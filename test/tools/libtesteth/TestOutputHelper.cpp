@@ -18,12 +18,13 @@
  * Fixture class for boost output when running testeth
  */
 
-#include <boost/test/unit_test.hpp>
-#include <boost/io/ios_state.hpp>
 #include <libethashseal/Ethash.h>
 #include <libethcore/BasicAuthority.h>
-#include <test/tools/libtesteth/TestOutputHelper.h>
 #include <test/tools/libtesteth/Options.h>
+#include <test/tools/libtesteth/TestOutputHelper.h>
+#include <boost/filesystem.hpp>
+#include <boost/io/ios_state.hpp>
+#include <boost/test/unit_test.hpp>
 #include <numeric>
 
 using namespace std;
@@ -84,6 +85,7 @@ void TestOutputHelper::finishTest()
 
 void TestOutputHelper::printTestExecStats()
 {
+    TestOutputHelper::get().checkUnfinishedTestFolders();
     if (Options::get().exectimelog)
     {
         boost::io::ios_flags_saver saver(cout);
@@ -99,4 +101,51 @@ void TestOutputHelper::printTestExecStats()
             std::cout << setw(45) << t.second << setw(25) << " time: " + toString(t.first) << "\n";
         saver.restore();
     }
+}
+
+void TestOutputHelper::checkUnfinishedTestFolders()
+{
+    // -t SuiteName/caseName   parse caseName as filter
+    // rCurrentTestSuite is empty if run without -t argument
+    string filter;
+    size_t pos = Options::get().rCurrentTestSuite.find('/');
+    if (pos != string::npos)
+        filter = Options::get().rCurrentTestSuite.substr(pos + 1);
+
+    for (auto const& allTestsIt : m_finishedTestFoldersMap)
+    {
+        boost::filesystem::path path = allTestsIt.first;
+        set<string> allFolders;
+        using fsIterator = boost::filesystem::directory_iterator;
+        if (filter.empty())
+        {
+            for (fsIterator it(path); it != fsIterator(); ++it)
+            {
+                if (boost::filesystem::is_directory(*it))
+                    allFolders.emplace(it->path().filename().c_str());
+            }
+        }
+        else
+        {
+            if (boost::filesystem::is_directory(path / filter))
+                allFolders.emplace(filter);
+        }
+
+        std::vector<string> diff;
+        finishedTestFoldersType finishedFolders = allTestsIt.second;
+        std::set_difference(allFolders.begin(), allFolders.end(), finishedFolders.begin(),
+            finishedFolders.end(), std::inserter(diff, diff.begin()));
+        for (auto const& it : diff)
+        {
+            std::cerr << "WARNING: Test folder " << path / it << " appears to be unused!"
+                      << "\n";
+        }
+    }
+}
+
+void TestOutputHelper::markTestFolderAsFinished(
+    boost::filesystem::path const& _suitePath, string const& _folderName)
+{
+    // Mark test folder _folderName as finished for the test suite path _suitePath
+    m_finishedTestFoldersMap[_suitePath].emplace(_folderName);
 }
